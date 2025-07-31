@@ -1,0 +1,4 @@
+faster-whisper
+openai
+flask
+streamlink
