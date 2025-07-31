@@ -1,4 +1,6 @@
-faster-whisper
-openai
 flask
-streamlink
+flask-socketio
+eventlet
+openai-whisper
+python-dotenv
+requests
