@@ -1,60 +1,86 @@
 import os
 import subprocess
-import threading
-import queue
-import time
-from flask import Flask, render_template
-from flask_socketio import SocketIO
+import tempfile
+import whisper
+from flask import Flask, render_template, request
+from flask_socketio import SocketIO, emit
 from dotenv import load_dotenv
-from utils import send_audio_to_replicate, get_chatgpt_response
+import requests
+import re
+import time
 
 load_dotenv()
+TWITCH_USER = os.getenv("TWITCH_USER", "gesturethejester")
 app = Flask(__name__)
-socketio = SocketIO(app, cors_allowed_origins="*")
-buffer = queue.Queue()
+socketio = SocketIO(app)
 
-TWITCH_USER = os.getenv("TWITCH_USER")
-REPLICATE_API_TOKEN = os.getenv("REPLICATE_API_TOKEN")
-WAKE_WORD = "hey ges"
+# Whisper model
+model = whisper.load_model("tiny")
 
-def listen_to_twitch_audio():
-    os.makedirs("chunks", exist_ok=True)
-    while True:
-        print("[Streamlink] Checking if you're live...")
-        cmd = f"streamlink --stdout https://twitch.tv/{TWITCH_USER} best | " \
-              f"ffmpeg -loglevel quiet -i pipe:0 -f segment -segment_time 7 -c:a libmp3lame chunks/%03d.mp3"
-        subprocess.run(cmd, shell=True)
-        print("[Streamlink] Stream ended or failed. Retrying in 15s...")
-        time.sleep(15)
+# Twitch API helpers
+def get_access_token():
+    client_id = os.getenv("TWITCH_CLIENT_ID")
+    client_secret = os.getenv("TWITCH_CLIENT_SECRET")
+    url = "https://id.twitch.tv/oauth2/token"
+    params = {
+        "client_id": client_id,
+        "client_secret": client_secret,
+        "grant_type": "client_credentials"
+    }
+    r = requests.post(url, params=params)
+    return r.json().get("access_token")
 
-def transcribe_loop():
-    seen = set()
-    while True:
-        for fname in sorted(os.listdir("chunks")):
-            if fname.endswith(".mp3") and fname not in seen:
-                seen.add(fname)
-                audio_path = f"chunks/{fname}"
-                print(f"[Whisper] Sending {fname} to Replicate...")
-                text = send_audio_to_replicate(audio_path, REPLICATE_API_TOKEN)
-                print("[TRANSCRIBED]", text)
-                if text and WAKE_WORD in text.lower():
-                    prompt = text.lower().split(WAKE_WORD, 1)[-1].strip()
-                    buffer.put(prompt)
+def get_stream_url():
+    token = get_access_token()
+    headers = {
+        "Client-ID": os.getenv("TWITCH_CLIENT_ID"),
+        "Authorization": f"Bearer {token}"
+    }
+    url = f"https://api.twitch.tv/helix/streams?user_login={TWITCH_USER}"
+    r = requests.get(url, headers=headers)
+    if r.json().get("data"):
+        m3u8 = f"https://usher.ttvnw.net/api/channel/hls/{TWITCH_USER}.m3u8"
+        return m3u8
+    return None
 
-def speak_loop():
-    while True:
-        msg = buffer.get()
-        reply = get_chatgpt_response(msg)
-        print("[RESPONSE]", reply)
-        socketio.emit("overlay_text", {"text": reply})
+# Transcribe audio from m3u8
+def transcribe_live():
+    url = get_stream_url()
+    if not url:
+        print("Stream not live.")
+        return
+
+    print("Starting capture...")
+    with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp:
+        audio_file = tmp.name
+
+    try:
+        # Record 10 seconds from live stream
+        subprocess.run([
+            "ffmpeg", "-y",
+            "-i", url,
+            "-t", "10",
+            "-vn",
+            "-acodec", "libmp3lame",
+            audio_file
+        ], check=True)
+
+        result = model.transcribe(audio_file)
+        print(result["text"])
+        return result["text"]
+
+    except Exception as e:
+        print("FFmpeg error:", e)
+        return "Transcription failed"
 
 @app.route("/")
-def overlay():
-    return render_template("overlay.html")
+def index():
+    return "Jester transcription server running."
 
-threading.Thread(target=listen_to_twitch_audio, daemon=True).start()
-threading.Thread(target=transcribe_loop, daemon=True).start()
-threading.Thread(target=speak_loop, daemon=True).start()
+@app.route("/transcribe", methods=["GET"])
+def transcribe_route():
+    text = transcribe_live()
+    return {"text": text or "No transcription available."}
 
 if __name__ == "__main__":
     socketio.run(app, host="0.0.0.0", port=8080)
