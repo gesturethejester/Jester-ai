@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <style>
+    body {
+      background: transparent;
+      font-family: 'Comic Sans MS', cursive;
+      color: white;
+      text-shadow: 2px 2px 5px black;
+      text-align: center;
+    }
+    #response {
+      font-size: 26px;
+      margin-top: 100px;
+      background: rgba(0, 0, 0, 0.6);
+      padding: 15px;
+      border-radius: 12px;
+      display: inline-block;
+    }
+  </style>
+</head>
+<body>
+  <div id="response">Waiting for your voice...</div>
+  <script>
+    async function fetchResponse() {
+      const res = await fetch("/static/current_response.txt");
+      const text = await res.text();
+      const el = document.getElementById("response");
+      if (text.trim() !== "") {
+        el.innerText = text.trim();
+        setTimeout(() => { el.innerText = ""; }, 7000);
+      }
+    }
+    setInterval(fetchResponse, 2000);
+  </script>
+</body>
+</html>
