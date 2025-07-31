@@ -12,10 +12,10 @@
   <div id="response">Waiting for Ges...</div>
   <script>
     const socket = io();
-    socket.on('overlay_text', data => {
-      document.getElementById('response').textContent = data.text;
+    socket.on("overlay_text", data => {
+      document.getElementById("response").textContent = data.text;
       setTimeout(() => {
-        document.getElementById('response').textContent = '';
+        document.getElementById("response").textContent = "";
       }, 10000);
     });
   </script>
