@@ -4,7 +4,8 @@ import threading
 import queue
 import whisper
 import requests
-from flask import Flask, render_template
+import time
+from flask import Flask, render_template, request
 from flask_socketio import SocketIO, emit
 from dotenv import load_dotenv
 
@@ -23,10 +24,19 @@ def listen_to_twitch_audio():
     if not TWITCH_USER:
         print("Missing TWITCH_USER in .env")
         return
+
     os.makedirs("chunks", exist_ok=True)
-    cmd = f"streamlink --stdout https://twitch.tv/{TWITCH_USER} best | " \
-          f"ffmpeg -loglevel quiet -i pipe:0 -f segment -segment_time 5 -c:a libmp3lame chunks/output%03d.mp3"
-    subprocess.run(cmd, shell=True)
+
+    while True:
+        print("[STREAMLINK] Checking for live stream...")
+        cmd = f"streamlink --stdout https://twitch.tv/{TWITCH_USER} best | " \
+              f"ffmpeg -loglevel quiet -i pipe:0 -f segment -segment_time 5 -c:a libmp3lame chunks/output%03d.mp3"
+
+        process = subprocess.Popen(cmd, shell=True)
+        process.wait()
+
+        print("[STREAMLINK] Stream ended or not found. Retrying in 15s...")
+        time.sleep(15)
 
 # ========== TRANSCRIPTION ==========
 def transcribe_audio_loop():
@@ -35,7 +45,7 @@ def transcribe_audio_loop():
         for f in sorted(os.listdir("chunks")):
             if f.endswith(".mp3") and f not in seen:
                 seen.add(f)
-                result = model.transcribe(f"chunks/{f}")
+                result = model.transcribe(f"chunks/" + f)
                 print("[TRANSCRIBED]", result['text'])
                 if wake_word in result['text'].lower():
                     msg = result['text'].lower().split(wake_word, 1)[-1].strip()
@@ -65,9 +75,17 @@ def process_queue():
         print("[RESPONSE]", reply)
         socketio.emit('overlay_text', {'text': reply})
 
+# ========== ROUTES ==========
 @app.route("/")
 def overlay():
     return render_template("overlay.html")
+
+@app.route("/test", methods=["POST"])
+def test_input():
+    msg = request.form.get("msg", "")
+    if msg:
+        buffer.put(msg)
+    return "OK"
 
 # ========== THREADS ==========
 threading.Thread(target=listen_to_twitch_audio, daemon=True).start()
