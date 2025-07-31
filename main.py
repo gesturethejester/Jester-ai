@@ -1,40 +1,45 @@
-from flask import Flask, render_template, jsonify
-from flask_socketio import SocketIO, emit
-import requests
-import time
-import threading
-import os
+import logging
+from flask import Flask, request
+from twitch_audio_capture import TwitchAudioCapture
 
 app = Flask(__name__)
-socketio = SocketIO(app, cors_allowed_origins="*")
 
-TWITCH_CHANNEL = os.getenv("TWITCH_CHANNEL", "gesturingthejester")
-DEBUG_STATE = {
-    "stream_live": False,
-    "last_transcription": "",
-    "last_error": ""
-}
+# 🔧 Configure detailed logging
+logging.basicConfig(
+    level=logging.DEBUG,
+    format="%(asctime)s [%(levelname)s] %(message)s"
+)
 
 @app.route("/")
 def index():
+    logging.info("🏠 GET / - Server is running.")
     return "Jester transcription server running"
 
-@app.route("/debug")
-def debug():
-    return jsonify(DEBUG_STATE)
+@app.route("/start", methods=["POST"])
+def start_transcription():
+    logging.info("📡 POST /start - Attempting to start Twitch audio capture.")
 
-def is_stream_live():
     try:
-        url = f"https://usher.ttvnw.net/api/channel/hls/{TWITCH_CHANNEL}.m3u8"
-        r = requests.get(url)
-        return "#EXTM3U" in r.text
-    except Exception as e:
-        DEBUG_STATE["last_error"] = f"is_stream_live error: {str(e)}"
-        return False
+        username = request.json.get("username", "gesturethejester")
+        model = request.json.get("model", "tiny")
+        language = request.json.get("language", "en")
 
-def download_audio_loop():
-    while True:
-        print(f"Checking stream status for: {TWITCH_CHANNEL}")
+        logging.info(f"🎙️ Requested stream: {username}")
+        logging.info(f"🧠 Whisper model: {model}, Language: {language}")
+
+        capture = TwitchAudioCapture(username=username, model=model, language=language)
+        capture.run()
+
+        logging.info("✅ Transcription pipeline launched successfully.")
+        return {"status": "Transcription started"}, 200
+
+    except Exception as e:
+        logging.error("❌ Error starting transcription", exc_info=True)
+        return {"error": str(e)}, 500
+
+if __name__ == "__main__":
+    logging.info("🚀 Launching Jester AI Flask server...")
+    app.run(host="0.0.0.0", port=8080)        print(f"Checking stream status for: {TWITCH_CHANNEL}")
         if is_stream_live():
             print("Stream is LIVE")
             DEBUG_STATE["stream_live"] = True
